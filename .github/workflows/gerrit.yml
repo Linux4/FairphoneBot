@@ -1,0 +1,59 @@
+name: Check for gerrit updates
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  push:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repo
+      uses: actions/checkout@v3
+      with:
+        submodules: true
+
+    - name: Checkout databases
+      uses: actions/checkout@v3
+      with:
+        ref: 'refs/heads/db'
+        path: 'db'
+
+    - name: Setup Java 21
+      uses: actions/setup-java@v4
+      with:
+       distribution: 'temurin'
+       java-version: '21'
+       cache: 'maven'
+
+    - name: Build bot
+      run: |
+       mvn package
+
+    - name: Run bot
+      env:
+       BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+      run: |
+       java -jar target/fairphonebot*.jar $BOT_TOKEN @fairphone_updates oneshot
+
+    - name: Update databases
+      run: |
+       git -C db config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+       git -C db config --local user.name "github-actions[bot]"
+       git -C db pull origin db --ff-only
+       git -C db add "*"
+       git -C db commit -m "fairphonebot: $(date)" || true
+
+    - name: Push database changes to repo
+      uses: ad-m/github-push-action@master
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        branch: 'db'
+        directory: 'db'
