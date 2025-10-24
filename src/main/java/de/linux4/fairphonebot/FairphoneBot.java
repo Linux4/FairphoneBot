@@ -21,8 +21,15 @@ import com.google.gerrit.extensions.api.projects.BranchInfo;
 import com.google.gerrit.extensions.api.projects.TagInfo;
 import com.google.gerrit.extensions.common.ProjectInfo;
 import com.google.gerrit.extensions.restapi.RestApiException;
+import com.microsoft.playwright.Browser;
+import com.microsoft.playwright.BrowserContext;
+import com.microsoft.playwright.Page;
+import com.microsoft.playwright.Playwright;
 import com.urswolfer.gerrit.client.rest.GerritAuthData;
 import com.urswolfer.gerrit.client.rest.GerritRestApiFactory;
+import org.jsoup.Jsoup;
+import org.jsoup.nodes.Document;
+import org.jsoup.nodes.Element;
 import org.telegram.telegrambots.client.okhttp.OkHttpTelegramClient;
 import org.telegram.telegrambots.longpolling.TelegramBotsLongPollingApplication;
 import org.telegram.telegrambots.longpolling.util.LongPollingSingleThreadUpdateConsumer;
@@ -42,6 +49,9 @@ public class FairphoneBot implements LongPollingSingleThreadUpdateConsumer {
 
     public record TelegramMessage(String channelId, String text) {
     }
+
+    public static final String FIRMWARE_URL
+            = "https://support.fairphone.com/hc/en-us/articles/18896094650513-How-to-manually-install-Android-on-your-Fairphone";
 
     public static final String GERRIT_BASE = "https://gerrit-public.fairphone.software";
     public static final String GITILES_BASE = GERRIT_BASE + "/plugins/gitiles/";
@@ -101,7 +111,8 @@ public class FairphoneBot implements LongPollingSingleThreadUpdateConsumer {
     }
 
     public void run() {
-        FairphoneGerritDatabase db = new FairphoneGerritDatabase("db/fairphonegerrit.db");
+        FairphoneFirmwareDatabase firmwareDb = new FairphoneFirmwareDatabase("db/fairphonefirmware.db");
+        FairphoneGerritDatabase gerritDb = new FairphoneGerritDatabase("db/fairphonegerrit.db");
 
         ExecutorService messageExecutor = Executors.newSingleThreadExecutor();
         ThreadPoolExecutor gerritCheckExecutor = (ThreadPoolExecutor) Executors.newFixedThreadPool(10);
@@ -138,12 +149,13 @@ public class FairphoneBot implements LongPollingSingleThreadUpdateConsumer {
         });
 
         do {
+            // 1. Check gerrit
             GerritRestApiFactory gerritApiFactory = new GerritRestApiFactory();
             GerritAuthData.Basic authData = new GerritAuthData.Basic("https://gerrit-public.fairphone.software");
             GerritApi gerritApi = gerritApiFactory.create(authData);
 
             try {
-                List<String> projects = db.getProjects();
+                List<String> projects = gerritDb.getProjects();
                 List<String> newProjects = new ArrayList<>();
 
                 for (ProjectInfo info : gerritApi.projects().list().get()) {
@@ -152,18 +164,18 @@ public class FairphoneBot implements LongPollingSingleThreadUpdateConsumer {
 
                 compare(projects, newProjects, (existingProject) -> {
                     messageQueue.add(new TelegramMessage(channel, "Project deleted! `" + existingProject + "`"));
-                    db.removeProject(existingProject);
+                    gerritDb.removeProject(existingProject);
                 },(newProject) -> {
                     messageQueue.add(new TelegramMessage(channel, "New project detected! `" + newProject + "`\n"
                             + "[Check Here](" + GITILES_BASE + newProject + ")"));
-                    db.addProject(newProject);
+                    gerritDb.addProject(newProject);
                 });
 
                 for (String project : newProjects) {
                     // Compare branches
                     gerritCheckExecutor.submit(() -> {
                         try {
-                            Map<String, String> branches = db.getBranches(project);
+                            Map<String, String> branches = gerritDb.getBranches(project);
                             Map<String, String> newBranches = new HashMap<>();
 
                             for (BranchInfo info : gerritApi.projects().name(project).branches().get()) {
@@ -173,13 +185,13 @@ public class FairphoneBot implements LongPollingSingleThreadUpdateConsumer {
                             compare(branches.keySet(), newBranches.keySet(), (existingBranch) -> {
                                 messageQueue.add(new TelegramMessage(channel, "Branch deleted! `" + project + "`"
                                         + " @ `" + existingBranch + "`"));
-                                db.removeBranch(project, existingBranch);
+                                gerritDb.removeBranch(project, existingBranch);
                             }, (newBranch) -> {
                                 messageQueue.add(new TelegramMessage(channel, "New branch detected! `" + project + "`"
                                         + " @ `" + newBranch + "`\n"
                                         + "[Check Here](" + GITILES_BASE + project + "/+/" + newBranch + ")"));
-                                db.addBranch(project, newBranch);
-                                db.setBranchRevision(project, newBranch, newBranches.get(newBranch));
+                                gerritDb.addBranch(project, newBranch);
+                                gerritDb.setBranchRevision(project, newBranch, newBranches.get(newBranch));
                             });
 
                             for (String existingBranch : branches.keySet()) {
@@ -203,7 +215,7 @@ public class FairphoneBot implements LongPollingSingleThreadUpdateConsumer {
                     // Compare tags
                     gerritCheckExecutor.submit(() -> {
                         try {
-                            List<String> tags = db.getTags(project);
+                            List<String> tags = gerritDb.getTags(project);
                             List<String> newTags = new ArrayList<>();
 
                             for (TagInfo info : gerritApi.projects().name(project).tags().get()) {
@@ -213,12 +225,12 @@ public class FairphoneBot implements LongPollingSingleThreadUpdateConsumer {
                             compare(tags, newTags, (existingTag) -> {
                                 messageQueue.add(new TelegramMessage(channel, "Tag deleted! `" + project + "`"
                                         + " @ `" + existingTag + "`"));
-                                db.removeTag(project, existingTag);
+                                gerritDb.removeTag(project, existingTag);
                             }, (newTag) -> {
                                 messageQueue.add(new TelegramMessage(channel, "New tag detected! `" + project + "`"
                                         + " @ `" + newTag + "`\n"
                                         + "[Check Here](" + GITILES_BASE + project + "/+/" + newTag + ")"));
-                                db.addTag(project, newTag);
+                                gerritDb.addTag(project, newTag);
                             });
                         } catch (RestApiException ex) {
                             ex.printStackTrace();
@@ -226,6 +238,72 @@ public class FairphoneBot implements LongPollingSingleThreadUpdateConsumer {
                     });
                 }
             } catch (RestApiException ex) {
+                ex.printStackTrace();
+            }
+
+            // 2. Check firmware
+            try {
+                Playwright playwright = Playwright.create();
+                Browser browser = playwright.chromium().launch();
+                BrowserContext context = browser.newContext(
+                        new Browser.NewContextOptions()
+                                .setViewportSize(1280, 800)
+                                .setUserAgent(
+                                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+                                                "AppleWebKit/537.36 (KHTML, like Gecko) " +
+                                                "Chrome/129.0.0.0 Safari/537.36"
+                                )
+                );
+                Page page = context.newPage();
+                page.navigate(FIRMWARE_URL);
+                Document doc = Jsoup.parse(page.content());
+
+                for (Element device : doc.select("h4:has(+ .accordion)")) {
+                    Element buildList = device.nextElementSibling().nextElementSibling();
+                    Element downloadLink = buildList.firstElementChild();
+                    // FP3
+                    if (downloadLink.hasClass("accordion"))
+                        downloadLink = downloadLink.nextElementSibling().firstElementChild();
+                    Element buildInfo = downloadLink.nextElementSibling();
+
+                    String model = device.text();
+                    String download = downloadLink.firstChild().attr("href");
+                    String[] downloadParts = download.split("/");
+                    String codename = downloadParts[3];
+                    String androidVersion = downloadParts[4].substring(1);
+                    String fileName = downloadParts[5];
+                    Map<String, String> buildProperties = new HashMap<>();
+
+                    for (Element property : buildInfo.select("span:has(> strong)")) {
+                        String content = property.html().replaceAll("\n", "");
+                        String[] contentParts = content.split("<strong>");
+
+                        for (String part : contentParts) {
+                            part = part.replaceAll("</strong>", "").replaceAll("<br>", "");
+
+                            if (!part.trim().isEmpty()) {
+                                buildProperties.put(part.split(":")[0].trim(), part.split(":")[1].trim());
+                            }
+                        }
+                    }
+
+                    if (!firmwareDb.getFirmwareVersion(model).equals(buildProperties.get("Version"))) {
+                        StringBuilder messageBuilder = new StringBuilder("New build detected!\n");
+                        messageBuilder.append("Device: `").append(model).append("`").append("\n");
+                        messageBuilder.append("Codename: `").append(codename).append("`").append("\n");
+                        messageBuilder.append("Android Version: `").append(androidVersion).append("`").append("\n");
+                        for (String property : buildProperties.keySet()) {
+                            messageBuilder.append(property).append(": `").append(buildProperties.get(property)).append("`")
+                                    .append("\n");
+                        }
+                        messageBuilder.append("Filename: `").append(fileName).append("`").append("\n");
+                        messageBuilder.append("[Download](").append(download).append(")").append("\n");
+
+                        messageQueue.add(new TelegramMessage(channel, messageBuilder.toString()));
+                        firmwareDb.setFirmwareVersion(model, buildProperties.get("Version"));
+                    }
+                }
+            } catch (Exception | Error ex) {
                 ex.printStackTrace();
             }
 

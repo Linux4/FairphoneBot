@@ -1,4 +1,4 @@
-name: Check for gerrit updates
+name: Check for firmware and gerrit updates
 
 on:
   schedule:
@@ -25,6 +25,47 @@ jobs:
       with:
         ref: 'refs/heads/db'
         path: 'db'
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update -y
+        sudo apt-get install -y --no-install-recommends \
+        libatk1.0-0 \
+        libatk-bridge2.0-0 \
+        libatspi2.0-0 \
+        libgtk-3-0 \
+        libgtk-4-1 \
+        libdrm2 \
+        libgbm1 \
+        libxkbcommon0 \
+        libxcomposite1 \
+        libxdamage1 \
+        libxrandr2 \
+        libxshmfence1 \
+        libnss3 \
+        libasound2t64 \
+        libpango-1.0-0 \
+        libcups2 \
+        libxss1 \
+        libxtst6 \
+        libvpx-dev \
+        libevent-2.1-7 \
+        libopus0 \
+        libwoff1 \
+        libsecret-1-0 \
+        libflite1 \
+        libavif16 \
+        libharfbuzz-icu0 \
+        libgstreamer1.0-0 \
+        libgstreamer-gl1.0-0 \
+        gstreamer1.0-plugins-base \
+        gstreamer1.0-plugins-good \
+        gstreamer1.0-plugins-bad \
+        gstreamer1.0-libav \
+        libhyphen0 \
+        libgraphene-1.0-0 \
+        libmanette-0.2-0 \
+        libgles2
 
     - name: Setup Java 21
       uses: actions/setup-java@v4
