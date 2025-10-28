@@ -200,7 +200,7 @@ public class FairphoneBot implements LongPollingSingleThreadUpdateConsumer {
                                     String newRevision = newBranches.get(existingBranch);
 
                                     if (!existingRevision.equals(newRevision)) {
-                                        messageQueue.add(new TelegramMessage(channel, "New commits detected!"
+                                        messageQueue.add(new TelegramMessage(channel, "New commits detected! "
                                                 + "`" + project + "` @ `" + existingBranch + "`\n"
                                                 + "`" + newRevision + "`\n"
                                                 + "[Check Here](" + GITILES_BASE + project + "/+log/" + newRevision + ")"));
