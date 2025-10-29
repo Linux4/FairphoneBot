@@ -204,6 +204,7 @@ public class FairphoneBot implements LongPollingSingleThreadUpdateConsumer {
                                                 + "`" + project + "` @ `" + existingBranch + "`\n"
                                                 + "`" + newRevision + "`\n"
                                                 + "[Check Here](" + GITILES_BASE + project + "/+log/" + newRevision + ")"));
+                                        gerritDb.setBranchRevision(project, existingBranch, newRevision);
                                     }
                                 }
                             }
