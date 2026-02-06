@@ -275,15 +275,26 @@ public class FairphoneBot implements LongPollingSingleThreadUpdateConsumer {
                     String fileName = downloadParts[5];
                     Map<String, String> buildProperties = new HashMap<>();
 
-                    for (Element property : buildInfo.select("span:has(> strong)")) {
+                    String currentPart = null;
+                    for (Element property : buildInfo.select("span:has(> :is(strong, code))")) {
                         String content = property.html().replaceAll("\n", "");
-                        String[] contentParts = content.split("<strong>");
+                        String tag = content.contains("<strong>") ? "strong" : "code";
+                        String[] contentParts = content.split("<" + tag + ">");
 
                         for (String part : contentParts) {
-                            part = part.replaceAll("</strong>", "").replaceAll("<br>", "");
+                            part = part.replaceAll("</" + tag + ">", "").replaceAll("<br>", "");
+                            // Continue if there was a key without a value
+                            if (currentPart != null) {
+                                part = currentPart + part;
+                                currentPart = null;
+                            }
 
                             if (!part.trim().isEmpty()) {
-                                buildProperties.put(part.split(":")[0].trim(), part.split(":")[1].trim());
+                                if (part.trim().endsWith(":")) {
+                                    currentPart = part;
+                                } else {
+                                    buildProperties.put(part.split(":")[0].trim(), part.split(":")[1].trim());
+                                }
                             }
                         }
                     }
